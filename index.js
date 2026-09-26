@@ -20,7 +20,7 @@ app.use(express.json());
 
 // External APIs
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=pak-digital.store&number=';
-const SIMDATA_API = 'https://simownerdetails.net/wp-admin/admin-ajax.php?action=fetch_sim_data&term=';
+const SIMDATA_API = 'https://iamkhoji.com/wp-admin/admin-ajax.php?action=fetch_sim_data&term=';
 
 // Helper 1: Standardize for Truecaller API (Needs 923XXXXXXXXX format)
 function formatForTruecaller(number) {
