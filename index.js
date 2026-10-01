@@ -20,7 +20,7 @@ app.use(express.json());
 
 // External APIs
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=pak-digital.store&number=';
-const SIMDATA_API = 'https://iamkhoji.com/wp-admin/admin-ajax.php?action=fetch_sim_data&term=';
+const NEW_SIMDATA_API = 'https://simdatacheck.pk/search_api.php?number=';
 
 // Helper 1: Standardize for Truecaller API (Needs 923XXXXXXXXX format)
 function formatForTruecaller(number) {
@@ -73,28 +73,78 @@ async function getTruecallerData(number) {
     }
 }
 
-// SIM Database API Fetch Function (Updated Endpoint)
+// New SIM Database API Fetch Function
 async function getSIMData(query) {
     try {
         const formattedQuery = formatForSIMAPI(query);
         if (!formattedQuery) return null;
 
-        const targetUrl = SIMDATA_API + encodeURIComponent(formattedQuery);
-        const response = await axios.get(targetUrl, { 
+        const targetUrl = NEW_SIMDATA_API + encodeURIComponent(formattedQuery);
+        const response = await axios.get(targetUrl, {
             timeout: 10000,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://iamkhoji.com/'
+                'Referer': 'https://simdatacheck.pk/'
             }
         });
 
         const resData = response.data;
 
-        if (resData && resData.success && Array.isArray(resData.data)) {
-            return resData.data;
+        if (!resData || Object.keys(resData).length === 0) {
+            return null;
         }
 
-        return null;
+        // Response normalization to support single item or array wrappers
+        let rawItems = [];
+        if (Array.isArray(resData)) {
+            rawItems = resData;
+        } else if (resData.data && Array.isArray(resData.data)) {
+            rawItems = resData.data;
+        } else if (typeof resData === 'object') {
+            rawItems = [resData];
+        }
+
+        let parsedData = [];
+
+        rawItems.forEach(item => {
+            const name = (item.name || item.full_name || '').toString().trim();
+            const cnic = (item.cnic || item.CNIC || '').toString().trim();
+            const address = (item.address || '').toString().replace(/\r/g, '').trim();
+            const network = item.network || item.operator || '';
+
+            // Handling CNIC multi-number array vs single number
+            if (Array.isArray(item.numbers) && item.numbers.length > 0) {
+                item.numbers.forEach(num => {
+                    let cleanNum = num.toString().replace(/\D/g, '');
+                    if (cleanNum.startsWith('92')) {
+                        cleanNum = '0' + cleanNum.substring(2);
+                    }
+                    parsedData.push({
+                        number: cleanNum,
+                        name: name,
+                        cnic: cnic,
+                        address: address,
+                        network: network
+                    });
+                });
+            } else {
+                let numVal = item.number || item.mobile || item.phone || '';
+                let cleanNum = numVal.toString().replace(/\D/g, '');
+                if (cleanNum.startsWith('92')) {
+                    cleanNum = '0' + cleanNum.substring(2);
+                }
+
+                parsedData.push({
+                    number: cleanNum,
+                    name: name,
+                    cnic: cnic,
+                    address: address,
+                    network: network
+                });
+            }
+        });
+
+        return parsedData.length > 0 ? parsedData : null;
     } catch (error) {
         return null;
     }
@@ -143,7 +193,7 @@ app.get('/api/search', async (req, res) => {
             if (initialData && Array.isArray(initialData) && initialData.length > 0) {
                 // Extract CNIC from initial number lookup
                 for (const rec of initialData) {
-                    const cnicVal = rec.cnic || rec.CNIC;
+                    const cnicVal = rec.cnic;
                     if (cnicVal) {
                         const cleanCnic = cnicVal.toString().replace(/\D/g, '');
                         if (cleanCnic.length === 13) {
@@ -167,14 +217,7 @@ app.get('/api/search', async (req, res) => {
         let numbersList = [];
 
         if (simDataResult && Array.isArray(simDataResult)) {
-            multiData = simDataResult.map(item => ({
-                number: item.number || item.mobile || item.phone || '',
-                name: (item.name || item.full_name || '').toString().trim(),
-                cnic: (item.cnic || item.CNIC || '').toString().trim(),
-                address: (item.address || '').toString().replace(/\r/g, '').trim(),
-                network: item.network || ''
-            }));
-
+            multiData = simDataResult;
             numbersList = multiData.map(item => item.number).filter(Boolean);
         }
 
