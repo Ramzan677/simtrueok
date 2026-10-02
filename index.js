@@ -21,8 +21,9 @@ app.use(express.json());
 // External APIs
 const TRUECALLER_API = 'https://faisal-ali-truecaller.ftgmhacks.workers.dev/?key=pak-digital.store&number=';
 const NEW_SIMDATA_API = 'https://simdatacheck.pk/search_api.php?number=';
+const WHATSAPP_API = 'https://waapi.vercel.app/api/profile?number=';
 
-// Helper 1: Standardize for Truecaller API (Needs 923XXXXXXXXX format)
+// Helper 1: Standardize for Truecaller & WhatsApp API (Needs 923XXXXXXXXX format)
 function formatForTruecaller(number) {
     if (!number) return '';
     let clean = number.toString().replace(/\D/g, '');
@@ -65,6 +66,28 @@ async function getTruecallerData(number) {
             return {
                 number: number,
                 name: response.data.data.name
+            };
+        }
+        return null;
+    } catch (error) {
+        return null;
+    }
+}
+
+// WhatsApp API Fetch Function
+async function getWhatsAppData(number) {
+    try {
+        const cleanNum = formatForTruecaller(number); // Reusing 923XXXXXXXXX format generator
+        if (!cleanNum) return null;
+
+        const response = await axios.get(WHATSAPP_API + cleanNum, { timeout: 8000 });
+        if (response.data && response.data.success && response.data.data) {
+            return {
+                number: number,
+                name: response.data.data.name || 'N/A',
+                wa_number: response.data.data.number || '',
+                profileDp: response.data.data.profileDp || '',
+                downloadDpLink: response.data.data.downloadDpLink || ''
             };
         }
         return null;
@@ -221,19 +244,32 @@ app.get('/api/search', async (req, res) => {
             numbersList = multiData.map(item => item.number).filter(Boolean);
         }
 
-        // Truecaller Logic Execution
+        // Parallel External APIs Execution (Truecaller + WhatsApp)
         let truecallerResults = [];
+        let whatsappResults = [];
 
         if (numbersList.length > 0) {
             const limitedNumbers = [...new Set(numbersList)].slice(0, 7);
-            const promises = limitedNumbers.map(num => getTruecallerData(num));
-            const results = await Promise.all(promises);
-            truecallerResults = results.filter(item => item !== null);
+            
+            const tcPromises = limitedNumbers.map(num => getTruecallerData(num));
+            const waPromises = limitedNumbers.map(num => getWhatsAppData(num));
+
+            const [tcRes, waRes] = await Promise.all([
+                Promise.all(tcPromises),
+                Promise.all(waPromises)
+            ]);
+
+            truecallerResults = tcRes.filter(item => item !== null);
+            whatsappResults = waRes.filter(item => item !== null);
         } else if (isNumber) {
-            const tcData = await getTruecallerData(rawQuery);
-            if (tcData) {
-                truecallerResults.push(tcData);
-            }
+            // Fallback: If SIM Database returned no data, query current input number directly
+            const [tcData, waData] = await Promise.all([
+                getTruecallerData(rawQuery),
+                getWhatsAppData(rawQuery)
+            ]);
+
+            if (tcData) truecallerResults.push(tcData);
+            if (waData) whatsappResults.push(waData);
         }
 
         return res.json({
@@ -245,7 +281,8 @@ app.get('/api/search', async (req, res) => {
             extracted_cnic: fetchedCNIC || 'N/A',
             total_numbers_found: multiData.length,
             sim_data: multiData,
-            truecaller_data: truecallerResults
+            truecaller_data: truecallerResults,
+            whatsapp_data: whatsappResults
         });
 
     } catch (error) {
@@ -271,7 +308,7 @@ app.get('/api/health', (req, res) => {
 // Root Endpoint
 app.get('/', (req, res) => {
     res.json({
-        message: 'SIM Multi-Data & Truecaller API',
+        message: 'SIM Multi-Data, Truecaller & WhatsApp Profile API',
         endpoints: {
             search: '/api/search?query=YOUR_NUMBER_OR_CNIC',
             health: '/api/health'
